@@ -136,16 +136,16 @@ def get_results(config_path, anim_path, out_path, device="cpu"):
 
             out_obj = copy.deepcopy(garment_template)
             out_obj.v = final_res
-            out_obj.write_txt(os.path.join(out_path, "{}.txt".format(frame)))
-            # out_obj.write(os.path.join(out_path, "{}.obj".format(frame)))
+            # out_obj.write_txt(os.path.join(out_path, "{}.txt".format(frame)))
+            out_obj.write(os.path.join(out_path, "{}.obj".format(frame)))
 
 
 if __name__ == "__main__":
     config_path = "assets/dress02/config.json"
     anim_path = "VirtualBoneDataset/dress02/Test_data/2.npz"
 
-    device = "cuda:1"
-    out_path = "out0317"
+    device = "cuda:0"
+    out_path = "out"
     if not os.path.exists(out_path):
         os.makedirs(out_path)
     get_results(config_path, anim_path, out_path, device)
