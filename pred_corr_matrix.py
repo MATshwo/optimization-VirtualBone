@@ -18,15 +18,12 @@ def plot_recover_matrix(matrix=None,label=0,init_motion=None):
             dims = vertextools.init_process()
             dense_adj = to_dense_adj(edge_index = edge_index_reduce,edge_attr = torch.from_numpy(matrix))[0]
             init_adj = vertextools.recover_matrix(dense_adj)
-            # print(init_adj[:10][:10])
             sns.heatmap(init_adj,cmap="Blues")
             plt.title(label)
             plt.savefig("matrix_18/Frame10_{}.png".format(label[:-4]),dpi=300,bbox_inches='tight')
             plt.clf()
             plt.close()
     
-
-
 
 if __name__ == "__main__":
     # 加载低维空间的邻接矩阵信息
