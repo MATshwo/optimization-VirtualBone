@@ -151,20 +151,18 @@ class Laplacian_Smooth(MessagePassing):
         return final_res[0]
 
 class reduction_tool_plus():
-    # 对原始布料模型的顶点降维&还原工具升级版 -- 顶点层次的降维:非三维坐标&时间长度
+    # 对原始布料模型的顶点降维&还原工具升级版 -- 顶点层次的降维:非三维坐标 or 时间长度
     # 支持PCA/KPCA/...等多种降维方式
 
     def __init__(self,init_pos,method="PCA",n_componment=18):
         self.choice = ["PCA","KPCA","FA","TSVD","DictLearn","NMF"]
         self.numverts = init_pos.shape[0]
         self.method = method
-        self.init_pos = init_pos.T #[500*3,numverts] -> 初始顶点坐标数据:取转置为了保证对顶点数目降维
-        self.n_componment = n_componment # 任意一套动作降维之后得到降维dim=18,取18作为基准
+        self.init_pos = init_pos.T 
+        self.n_componment = n_componment 
 
     def init_process(self):
         # 首次降维操作: 对初始布料模型(不包含任何动作信息)降维,并保存fit后的模型作为预训练模型
-        # 由于初始布料模型相当于只有一个样本 - 无法降维,只能使用三维坐标作为三个样本降维 -- 主成分 <= 3
-
         if self.method == "PCA":
             self.percent = 0.999
             self.tool = PCA(n_components=self.percent) 
