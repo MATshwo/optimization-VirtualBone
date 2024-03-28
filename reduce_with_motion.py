@@ -24,7 +24,6 @@ os.environ ["CUDA_VISIBLE_DEVICES"] = "1,2,0"
 
 def Training(config_path,out_path, device="cpu",mode="LF"):
     
-    ## 1. 配置参数加载
     with open(config_path, "r") as f:
         config = json.load(f)
 
@@ -37,21 +36,17 @@ def Training(config_path,out_path, device="cpu",mode="LF"):
     obj_template_path = config["obj_template_path"]
     
     garment_template = Mesh_obj(obj_template_path)
-    joint_num = len(joint_list) #20
+    joint_num = len(joint_list) 
     state = np.load(state_path)
     
-    ## 2. 读取state_npy获取"标准化"参数
-    # state应该是训练集的均值和方差
-    # cloth_pose/trans.shape:[80,3]对应虚拟骨骼的旋转和平移,作为ground_truth
     cloth_pose_mean = torch.from_numpy(state["cloth_pose_mean"]).to(device)
     cloth_pose_std = torch.from_numpy(state["cloth_pose_std"]).to(device)
     cloth_trans_mean = torch.from_numpy(state["cloth_trans_mean"]).to(device)
     cloth_trans_std = torch.from_numpy(state["cloth_trans_std"]).to(device)
 
-    #[numvert,3],ssdr处理后的布料网格坐标,同样ground_truth
     ssdr_res_mean = torch.from_numpy(state["ssdr_res_mean"]).to(device)
     ssdr_res_std = torch.from_numpy(state["ssdr_res_std"]).to(device)
-    #[numvert,3]根据仿真得到的布料动画坐标,作为ground_truth
+
     vert_std = torch.from_numpy(state["sim_res_std"]).to(device)
     vert_mean = torch.from_numpy(state["sim_res_mean"]).to(device)
 
@@ -59,25 +54,21 @@ def Training(config_path,out_path, device="cpu",mode="LF"):
     detail_net_path = config["detail_net_path"]
     detail_net_path_save = config["detail_net_path_save"]
     
-    ## 3. 加载布料初始模型,并获取邻接信息和Laplacian矩阵
     data = FaceToEdge()(Data(num_nodes=garment_template.v.shape[0],
                              face=torch.from_numpy(garment_template.f.astype(int).transpose() - 1).long()))
     
-    ## 4. 初始化LR模型和优化器
     ssdr_model = GRU_Model((joint_num + 1) * 3, gru_dim, [ssdrlbs_bone_num * 6]).to(device)
 
     ssdrlbs = SSDRLBS(os.path.join(ssdrlbs_root_dir, "u.obj"),
                       os.path.join(ssdrlbs_root_dir, "skin_weights.npy"),
                       os.path.join(ssdrlbs_root_dir, "u_trans.npy"),
                       device)
-    
-    # 任取一套动作的先验作为降维 -- 不同动作影响体现在motion_net的weights
+
     init_motion_path = "VirtualBoneDataset/dress02/HF_res/0.npz"
     init_motion = np.load(init_motion_path,allow_pickle=True)["final_ground"] #[500,12273,3]-[12273,500,3]
     numvers = init_motion.shape[1]
     init_motion = init_motion.transpose(1,0,2).reshape(numvers,-1) 
 
-    ## 6. 加载动作序列和仿真结果作为label->需要进行标准化处理
     Batchsize_lf = 8
     Batchsize_hf = 5
     LF_epoch = 50
@@ -95,10 +86,9 @@ def Training(config_path,out_path, device="cpu",mode="LF"):
         loss_list = []
         data.edge_index = data.edge_index.to(device)
         for epoch in tqdm(range(LF_epoch)):
-            #for _,(pose_arr,trans_arr,simData) in enumerate(groundLF):
+
             for _,(pose_arr,trans_arr,simData,dpos) in enumerate(groundLF):
-                # gc.collect()
-                # torch.cuda.empty_cache()
+
                 ssdr_hidden = None
                 loss_lf = 0.0
                 item_length = pose_arr.shape[1] # 500个关键帧
@@ -112,27 +102,22 @@ def Training(config_path,out_path, device="cpu",mode="LF"):
                     motion_signature = torch.from_numpy(motion_signature)
                     motion_signature = motion_signature.view((Batchsize_lf, -1)).to(device)
 
-                    # 估计虚拟骨骼的运动数据
                     pred_rot_trans, new_ssdr_hidden = ssdr_model(motion_signature, ssdr_hidden)
                     ssdr_hidden = new_ssdr_hidden
-                    #print(pred_rot_trans.shape) #[Batchsize,480]
 
-                    # 因为喂入的数据在上文进行了标准化,对应预测结果也是标准化向量,需要还原
+
                     pred_pose = pred_rot_trans.view((Batchsize_lf,-1, 6))[:,:, 0:3] * cloth_pose_std + \
                                 cloth_pose_mean
                     pred_trans = pred_rot_trans.view((Batchsize_lf,-1, 6))[:,:, 3:6] * cloth_trans_std + \
                                     cloth_trans_mean
 
-                    # 返回经ssdrlbs重构后的布料模型,且已经参照state_pose进行了位置还原,可直接计算与低频标签计算loss
                     ssdr_res = ssdrlbs.batch_pose(pred_trans.reshape((Batchsize_lf, 1, pred_trans.shape[1], pred_trans.shape[2])),
                                                     torch.deg2rad(pred_pose).reshape(
                                                         (Batchsize_lf, 1, pred_pose.shape[1], pred_pose.shape[2])))
-                    # print(ssdr_res.shape) #[Batchsize,1,12273,3]
 
-                    #dpred_pos = (smoother.laplacian_smooth(ssdr_res[:,0,:,:].to("cpu"),data.edge_index.to("cpu")))[9]  # 平滑10次的结果
                     is_mse = True
                     if (is_mse):
-                        dpred_pos = smoother.laplacian_smooth(ssdr_res[:,0,:,:],data.edge_index,is_train=True)  # 平滑10次的结果
+                        dpred_pos = smoother.laplacian_smooth(ssdr_res[:,0,:,:],data.edge_index,is_train=True)  
                         tmploss= 0.0
                         tmploss = laplace_loss*Loss_func(dpos[:,frame,:,:].to(device),dpred_pos.to(device),mode="L2")
                         loss_lf = loss_lf + Loss_func(simData[:,frame,:,:].to(device),ssdr_res[:,0,:,:].to(device),mode="L2") + tmploss.to(device)
@@ -145,32 +130,25 @@ def Training(config_path,out_path, device="cpu",mode="LF"):
                 optimizer_lf.zero_grad()
                 loss_lf.backward()
                 optimizer_lf.step()
-            # scheduler_lf.step()
+
             torch.save(ssdr_model.state_dict(),ssdrlbs_net_path)            
             np.save('./assets/dress02/2024/0313',np.array(loss_list))
 
     elif (mode == "HF"):
 
-        # [12273,1500]的数据量过大导致KPCA训练缓慢 -- 先尝试其他降维方案
+
         vertextools = reduction_tool_plus(init_motion,method="PCA")
         dims = vertextools.init_process()
-        # print(dims)
         ssdr_model.load_state_dict(torch.load(ssdrlbs_net_path,map_location="cuda:1"))
         ssdr_model.eval()
-
-        # data.edge_index = data.edge_index.to(device)
 
         edge_index_reduce = get_full_edge_index(dims,mode="full").to(device) 
         detail_model = MyGRU_GCN_Model_motion(6 * ssdrlbs_bone_num, gru_dim, [gru_out_dim * dims],
                                  gru_out_dim, [3,8,16], edge_index_reduce,p=0)
         
-        # if os.path.exists(os.path.join(detail_net_path_save,"Reduction_motion_FA_0505.pth.tar")):
-        #    detail_model.load_state_dict(torch.load(os.path.join(detail_net_path_save,"Reduction_motion_FA_0505.pth.tar"))) 
-        #    print("Loading exists model...")
-        
+
         detail_model.to(device)
         optimizer_hf = torch.optim.Adam(detail_model.parameters(), lr=0.01)
-        #scheduler_hf = torch.optim.lr_scheduler.StepLR(optimizer_hf, step_size=2, gamma=0.1)
     
         HFdata = Mydata(config["motion_path"],state,mode="HF")
         detail_model.train()
@@ -220,11 +198,9 @@ def Training(config_path,out_path, device="cpu",mode="LF"):
                     detail_res = vertextools.dim_recover(detail_reduce)
                     final_res = ssdr_res.reshape((Batchsize_hf,-1, 3)) + (detail_res.reshape((Batchsize_hf,-1, 3)) * ssdr_res_std + ssdr_res_mean)
 
-                    # 低维空间损失计算 -- 如果还是生成常量的话 -- 考虑是否添加隐空间的方差向量
                     reduce_truth = vertextools.dim_reduction(simData[:,frame,:,:].to(device))
                     reduce_loss = reduce_loss + Loss_func(reduce_truth.reshape(Batchsize_hf,-1),detail_reduce,mode="L2")
-                   
-                    # 总损失 = 高维损失 + 低维损失
+
                     loss_hf = loss_hf + Loss_func(simData[:,frame,:,:].to(device),final_res,mode="L2")
                     
                     #out_obj = copy.deepcopy(garment_template)
@@ -240,8 +216,6 @@ def Training(config_path,out_path, device="cpu",mode="LF"):
                 loss_total.backward()
                 optimizer_hf.step()
 
-            # 每个epochlr重置
-            #scheduler_hf.step()
             plot_loss(loss_ori=loss_list,loss_reduce=reduce_list,lens=len(loss_list))
             torch.save(detail_model.state_dict(),os.path.join(detail_net_path_save,"PCA0313.pth.tar"))
             np.save('./assets/dress02/checkpoints/2024/PCA0313',np.array(loss_list))
