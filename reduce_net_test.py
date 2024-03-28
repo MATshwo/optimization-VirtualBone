@@ -16,7 +16,6 @@ from src.SSDRLBS import SSDRLBS
 from src.models import *
 import matplotlib.pyplot as plt
 
-# 此代码仅包含测试模块,不包含训练,网络与服装类型之间有一对一的关系
 
 def get_results(config_path, anim_path, out_path, device="cpu"):
     with open(config_path, "r") as f:
@@ -47,14 +46,14 @@ def get_results(config_path, anim_path, out_path, device="cpu"):
     data = FaceToEdge()(Data(num_nodes=garment_template.v.shape[0],
                              face=torch.from_numpy(garment_template.f.astype(int).transpose() - 1).long()))
 
-    # 降维模型预训练
+
     init_motion_path = "VirtualBoneDataset/dress02/HF_res/0.npz"
     init_motion = np.load(init_motion_path,allow_pickle=True)["final_ground"] #[500,12273,3]-[12273,500,3]
     numvers = init_motion.shape[1]
     init_motion = init_motion.transpose(1,0,2).reshape(numvers,-1) 
     vertextools = reduction_tool_plus(init_motion,method="KPCA")
     dims = vertextools.init_process()
-    # print(dims)
+
     
     edge_index_reduce = get_full_edge_index(dims,mode="full").to(device) 
     detail_model = MyGRU_GCN_Model_motion(6 * ssdrlbs_bone_num, gru_dim, [gru_out_dim * dims],
@@ -124,7 +123,6 @@ def get_results(config_path, anim_path, out_path, device="cpu"):
             detail_res = vertextools.dim_recover(detail_reduce)
             final_res = ssdr_res.reshape((-1, 3)).cpu().numpy() + (detail_res.reshape((-1, 3)).cpu().numpy() * ssdr_res_std + ssdr_res_mean)
             
-            # 逐帧计算与仿真结果之间的差异
             #loss_list.append(Loss_func(torch.from_numpy(temp[frame]),torch.from_numpy(final_res),mode="L2"))
 
             out_obj = copy.deepcopy(garment_template) # 深拷贝,创建新变量副本
@@ -133,7 +131,6 @@ def get_results(config_path, anim_path, out_path, device="cpu"):
             out_obj.v = final_res
             out_obj.write(os.path.join(out_path, "KPCA{}.obj".format(frame)))
         
-        #np.save("dim=18_PCA_loss83",np.array(loss_list))
 
 
 if __name__ == "__main__":
