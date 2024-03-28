@@ -23,8 +23,6 @@ import cv2
 os.environ['KMP_DUPLICATE_LIB_OK']='True'
 #endregion
 
-
-# region 0314Loss修改
 # region 顶点坐标随动画帧变动可视化:500帧动作下,12273个顶点的三个坐标分量变化折线图,每张图表示一个顶点。
 x1 = np.load("./VirtualBoneDataset/dress02/HFdata/0.npz",allow_pickle=True)
 x2 = np.load("./VirtualBoneDataset/dress02/HFdata/1.npz",allow_pickle=True)
@@ -35,7 +33,6 @@ if not os.path.exists(path):
     os.makedirs(path)
 for i in range(12273)[:]:
     plt.figure()
-    # plt.xlim(x1, x2)
     plt.ylim(-1.0, 1.5)
     plt.plot(x1["sim_res"][:,i,0],label="X")
     plt.plot(x1["sim_res"][:,i,1],label="Y")
@@ -45,17 +42,15 @@ for i in range(12273)[:]:
     plt.title(name)
     figname = path+'pos_motion0_'+str(i)+'.png'
     plt.savefig(figname,bbox_inches='tight')   
-    # 及时清除,不然内存会爆掉
+
     plt.clf()
     plt.close()
 
 # 加载本地png生成动画文件
 path = r"./photo/pos_motion0_"
-fps = 24  # 可以随意调整视频的帧速率
-
+fps = 24  
 fourcc = cv2.VideoWriter_fourcc(*'XVID')
 videoWriter = cv2.VideoWriter('TestVideo.mp4',fourcc,fps,(559,433),True)
-
 for i in range(12273):
     frame = cv2.imread(path+str(i)+'.png')
     cv2.imshow('frame',frame)
@@ -64,48 +59,7 @@ for i in range(12273):
             break
 videoWriter.release()
 cv2.destroyAllWindows()
-
 # endregion
-
-
-
-
-# def Loss_func(pos,pred_pos,mode="L1",bool_col = 0):
-#     """
-#     定义反向传播的loss函数：
-#     1. Loss_LF() = 
-#     2. Loss_HF() = 
-#     3. Loss_collision() =
-#     """
-#     # bool_col:是否使用碰撞loss,暂不使用,没有找到合适的人体模型和检测算法
-    
-#     laplace_loss = 1.0
-#     lambda_col = 0.1
-#     de = torch.tensor(0.0001) # barrier between cloth and body,原文取值=0,但感觉太极限了,可以留一段距离！
-#     loss_lf,loss_hf,losscol = 0.0,0.0,0.0
-
-#     if mode == "Lf":
-#         # 1. 低频loss
-#         # torch.mean(torch.norm(y-y_pred,p=2,dim=1))
-#         loss_lf = torch.mean(torch.norm(pos-pred_pos,p=2,dim=2))
-
-#     if mode == "Hf":
-#         # 2. 高频loss
-#         loss_hf = torch.mean(torch.norm(pos-pred_pos,p=2,dim=2))
-#         #loss_hf = loss_hf + lambda_laplace*torch.mean(torch.norm(Laplace(pos)-Laplace(pred_pos),p=2,dim=1))
-
-#     # 3. 碰撞loss
-#     if bool_col:
-        
-#         # bpos,bnormal = find_nearest(pred_pos)
-#         # tmp = torch.matmul(b_normal,torch.transpose(pred_pos-bpos,0,1))
-#         # tmp = torch.diag(tmp).reshape(1,-1) # [N,1]
-#         # losscol = lambda_col * torch.mean(de-torch.min(tmp,de))
-#         losscol = 0.0
-#     return loss_lf+loss_hf+losscol
-    
-#endregion
-
 
 # 数据加载
 #region 
@@ -120,9 +74,7 @@ state_path =  "assets/dress02/state.npz"
 #endregion
 
 
-
-
-"""真实数据与高频输出对齐处理,得到HF网络输出的标签用于计算loss"""
+# """真实数据与高频输出对齐处理,得到HF网络输出的标签用于计算loss"""
 #region
 #注: 使用自定义数据集必须有
 #   1.K组动作序列-[帧数,poses:{52,3},trans:{3}];
@@ -146,17 +98,17 @@ state_path =  "assets/dress02/state.npz"
 #            trans = trans_arr[frame] * state["trans_std"] + state["trans_mean"]
 #            trans_off = np.array([0,-2.1519510746002397,90.4766845703125]) / 100.0
 #            trans += trans_off
-#            final_res_ori = (tmp["sim_res"][frame] - trans).transpose() # 先转置
+#            final_res_ori = (tmp["sim_res"][frame] - trans).transpose() # 转置
 #            t = (Rotation.from_rotvec(pose[0]).as_matrix()).transpose() # 旋转矩阵转置即为逆矩阵
 #            # final_res_ori = torch.from_numpy(np.matmul(t,final_res_ori).transpose())
 #            result[frame,:,:] = np.matmul(t,final_res_ori).transpose()
-#            # 经测试,final_res_ori与HF+LF网络输出对齐,处理无误.
+#       
 #            #out_obj = copy.deepcopy(garment_template) 
 #            #out_obj.v = result[frame,:,:] 
 #            #out_obj.write(os.path.join(out_path, "{}.obj".format("Testing")))
 #        np.savez(r"D:\ProgramTotal\ProgramDemo\VS2019\VirtualBone0302\VirtualBone0302\VirtualBoneDataset\dress02\HF_res/"+i,final_ground=result)
 #endregion
-#endregion
+
 
 #Laplacian平滑计算
 #region 
