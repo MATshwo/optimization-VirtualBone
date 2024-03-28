@@ -18,15 +18,16 @@ from Mytools import *
 from torch_geometric.utils import get_laplacian,to_dense_adj,dense_to_sparse
 
 def get_full_edge_index(numverts=1,mode="empty"):
-    # 根据顶点数量创建全孤立&全连通的邻接矩阵  -- 返回稀疏格式[2,edge_num]
+
     from torch_geometric.utils import dense_to_sparse    
     if mode == "empty":
-        adj = torch.zeros((numverts,numverts))  # 使用全连接导致最终输出无法区分不同维度的差别，所以由全连通改为全不连通
+        adj = torch.zeros((numverts,numverts))  
     elif mode == "full":
-        # 全连通邻接矩阵
+
         adj = torch.ones((numverts,numverts)) - torch.eye(numverts)
     return dense_to_sparse(adj)[0]
-# 尝试还原训练过程
+    
+# 还原训练过程
 os.environ ["CUDA_VISIBLE_DEVICES"] = "1,2,0"
 class AverageMeter():
     """Computes and stores the average and current value"""
@@ -62,17 +63,15 @@ def Training(config_path,out_path, device="cpu",mode="LF"):
     state = np.load(state_path)
     
     ## 2. 读取state_npy获取"标准化"参数
-    # state应该是训练集的均值和方差
-    # cloth_pose/trans.shape:[80,3]对应虚拟骨骼的旋转和平移,作为ground_truth
     cloth_pose_mean = torch.from_numpy(state["cloth_pose_mean"]).to(device)
     cloth_pose_std = torch.from_numpy(state["cloth_pose_std"]).to(device)
     cloth_trans_mean = torch.from_numpy(state["cloth_trans_mean"]).to(device)
     cloth_trans_std = torch.from_numpy(state["cloth_trans_std"]).to(device)
 
-    #[numvert,3],ssdr处理后的布料网格坐标,同样ground_truth
+
     ssdr_res_mean = torch.from_numpy(state["ssdr_res_mean"]).to(device)
     ssdr_res_std = torch.from_numpy(state["ssdr_res_std"]).to(device)
-    #[numvert,3]根据仿真得到的布料动画坐标,作为ground_truth
+
     vert_std = torch.from_numpy(state["sim_res_std"]).to(device)
     vert_mean = torch.from_numpy(state["sim_res_mean"]).to(device)
 
@@ -100,32 +99,24 @@ def Training(config_path,out_path, device="cpu",mode="LF"):
     laplace_loss = 1.0
 
     if mode == 'LF':
-        # 计算拉普拉斯平滑矩阵
 
         LFdata = Mydata(config["motion_path"],state,mode="LF")
         ssdr_model.train()
         groundLF = DataLoader(dataset=LFdata,batch_size=Batchsize_lf,shuffle=True,drop_last=True,num_workers=0)
         optimizer_lf = torch.optim.Adam(ssdr_model.parameters(), lr=0.0001) # 使用SGD效果不太好
-        # scheduler_lf = torch.optim.lr_scheduler.StepLR(optimizer_lf, step_size=5, gamma=0.1)
 
-        # 初始化平滑器
-        
         smoother = Laplacian_Smooth()
         loss_list = []
         data.edge_index = data.edge_index.to(device)
         for epoch in tqdm(range(LF_epoch)):
-            #for _,(pose_arr,trans_arr,simData) in enumerate(groundLF):
+
             for _,(pose_arr,trans_arr,simData,dpos) in enumerate(groundLF):
-                # gc.collect()
-                # torch.cuda.empty_cache()
                 ssdr_hidden = None
                 loss_lf = 0.0
                 item_length = pose_arr.shape[1] # 500个关键帧
-                # print(pose_arr.shape) #[8,500,53,3]
-                # 针对每个动作序列的操作
-                #for frame in tqdm(range(item_length)):
+
                 for frame in (range(item_length)):
-                    # shape -> [batchsize,1,21*3]
+
                     motion_signature = np.zeros((Batchsize_lf,(len(joint_list) + 1) * 3), dtype=np.float32)
                     for j in range(len(joint_list)):
                         motion_signature[:,j * 3: j * 3 + 3] = pose_arr[:,frame, joint_list[j]]
@@ -134,12 +125,10 @@ def Training(config_path,out_path, device="cpu",mode="LF"):
                     motion_signature = torch.from_numpy(motion_signature)
                     motion_signature = motion_signature.view((Batchsize_lf, -1)).to(device)
 
-                    # 估计虚拟骨骼的运动数据
+ 
                     pred_rot_trans, new_ssdr_hidden = ssdr_model(motion_signature, ssdr_hidden)
                     ssdr_hidden = new_ssdr_hidden
-                    #print(pred_rot_trans.shape) #[Batchsize,480]
-
-                    # 因为喂入的数据在上文进行了标准化,对应预测结果也是标准化向量,需要还原
+     
                     pred_pose = pred_rot_trans.view((Batchsize_lf,-1, 6))[:,:, 0:3] * cloth_pose_std + \
                                 cloth_pose_mean
                     pred_trans = pred_rot_trans.view((Batchsize_lf,-1, 6))[:,:, 3:6] * cloth_trans_std + \
@@ -149,12 +138,7 @@ def Training(config_path,out_path, device="cpu",mode="LF"):
                     ssdr_res = ssdrlbs.batch_pose(pred_trans.reshape((Batchsize_lf, 1, pred_trans.shape[1], pred_trans.shape[2])),
                                                     torch.deg2rad(pred_pose).reshape(
                                                         (Batchsize_lf, 1, pred_pose.shape[1], pred_pose.shape[2])))
-                    # print(ssdr_res.shape) #[Batchsize,1,12273,3]
 
-                    # 与低频数据(并非直接与label)计算loss:平滑结果在anima.py中已计算并保存至LFdata
-                    # Loss也需要更新为原始损失和laplacian损失！不然还原的布料褶皱区域会炸裂！
-                    
-                    #dpred_pos = (smoother.laplacian_smooth(ssdr_res[:,0,:,:].to("cpu"),data.edge_index.to("cpu")))[9]  # 平滑10次的结果
                     is_mse = True
                     if (is_mse):
                         dpred_pos = smoother.laplacian_smooth(ssdr_res[:,0,:,:],data.edge_index,is_train=True)  # 平滑10次的结果
@@ -162,38 +146,28 @@ def Training(config_path,out_path, device="cpu",mode="LF"):
                         tmploss = laplace_loss*Loss_func(dpos[:,frame,:,:].to(device),dpred_pos.to(device),mode="L2")
                         loss_lf = loss_lf + Loss_func(simData[:,frame,:,:].to(device),ssdr_res[:,0,:,:].to(device),mode="L2") + tmploss.to(device)
                     else:
-                        # 这里好像反了,应该是真实数据指导预测数据,KL散度左右顺序有关系,不过应该影响不大
-                        # 可以测试下KL达到最小时对应的MSE距离
                         loss_lf = loss_lf + KL_distance(ssdr_res[:,0,:,:].to(device),simData[:,frame,:,:].to(device)) 
 
-                # 一个batch计算一次loss反向传播
+
                 loss_lf = loss_lf/(item_length)
                 loss_list.append(loss_lf.item())
                 print("Epoch:{}/{} --- Loss_LF :{}".format(epoch,LF_epoch,loss_lf.item()))
                 optimizer_lf.zero_grad()
                 loss_lf.backward()
                 optimizer_lf.step()
-            # scheduler_lf.step()
             torch.save(ssdr_model.state_dict(),ssdrlbs_net_path)            
             np.save('./assets/dress02/KL2_LF0409',np.array(loss_list))
 
     elif (mode == "HF"):
-        
-        
+                
         vertextools = reduction_tool_plus(garment_template.v,method="PCA")
         vertextools.init_process()
-        # vertextools = reduction_tool(garment_template.v)
-        # vertextools.PCA_process()
-
 
         ssdr_model.load_state_dict(torch.load(ssdrlbs_net_path,map_location=device))
         ssdr_model.eval()
-        # data.edge_index = data.edge_index.to(device)
 
-        # 指定PCA降维结果=3, 所以直接设置为全连通
         edge_index_reduce = torch.tensor([[0,1,0,2,1,2],[1,0,2,0,2,1]]).to(device) # 还是全连通,但通过神经网络学习一个边的权重结果
-        #edge_index_reduce = get_full_edge_index(3,mode="empty").to(device)  # 全不连通 -- 独立
-        # 此处输出维度要修改为PCA降维后的维度
+
         detail_model = MyGRU_GCN_Model_motion(6 * ssdrlbs_bone_num, gru_dim, [gru_out_dim * 3],
                                  gru_out_dim, [3,8,16], edge_index_reduce,p=0)
         
@@ -202,9 +176,8 @@ def Training(config_path,out_path, device="cpu",mode="LF"):
            print("Loading exists model...")
         
         detail_model.to(device)
-        # 0.00003的学习率更新太慢 -- 初始要用大一点的
+
         optimizer_hf = torch.optim.Adam(detail_model.parameters(), lr=0.005)
-        #scheduler_hf = torch.optim.lr_scheduler.StepLR(optimizer_hf, step_size=2, gamma=0.1)
     
         HFdata = Mydata(config["motion_path"],state,mode="HF")
         detail_model.train()
@@ -243,9 +216,8 @@ def Training(config_path,out_path, device="cpu",mode="LF"):
                                                         torch.deg2rad(pred_pose).reshape(
                                                             (Batchsize_hf, 1, pred_pose.shape[1], pred_pose.shape[2])))
                     
-                    # print(pred_rot_trans.shape) #[5,480]
-                    # ssdr_res.shape = [batch,1,12273,3]
-                    ssdr_reduce = vertextools.dim_reduction(ssdr_res) # [batch,1,new_dim,3] => 直接降到了2维 :) 
+
+                    ssdr_reduce = vertextools.dim_reduction(ssdr_res) 
                     
                     detail_reduce, new_detail_hidden,new_motion_hiddden = detail_model(pred_rot_trans,motion_signature,ssdr_reduce,detail_hidden,motion_hidden)
                     detail_hidden = new_detail_hidden
@@ -274,8 +246,6 @@ def Training(config_path,out_path, device="cpu",mode="LF"):
                 loss_total.backward()
                 optimizer_hf.step()
 
-            # 每个epochlr重置
-            #scheduler_hf.step()
             torch.save(detail_model.state_dict(),os.path.join(detail_net_path_save,"Reduction_motion_PCA_0424.pth.tar"))
             np.save('./assets/dress02/checkpoints/cosine_distance/Reduction_motion_PCA_0424',np.array(loss_list))
 
@@ -284,13 +254,8 @@ def Training(config_path,out_path, device="cpu",mode="LF"):
 
 if __name__ == "__main__":
     config_path = "assets/dress02/config.json"
-    # anim_path = "anim/anim2.npz"
     out_path = "out"
     if not os.path.exists(out_path):
         os.makedirs(out_path)
-
-    #  watch -n 10 nvidia-smi : 查看GPU内存使用
     device = "cuda:0"
-    
-    #Training(config_path,out_path,device,mode="LF")
-    Training(config_path,out_path,device,mode="HF") # 比较极限,batch=3都占用了10000mb,快超了
+    Training(config_path,out_path,device,mode="HF") 
