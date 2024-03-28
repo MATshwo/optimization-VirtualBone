@@ -204,7 +204,7 @@ def get_results(config_path, anim_path, sim_param, out_path, device="cpu"):
 
             out_obj = copy.deepcopy(garment_template)
             out_obj.v = final_res
-            # out_obj.write(os.path.join(out_path, "{}.obj".format(frame)))
+            out_obj.write(os.path.join(out_path, "{}.obj".format(frame)))
 
 
 if __name__ == "__main__":
