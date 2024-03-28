@@ -16,45 +16,6 @@ from scipy.spatial.transform import Rotation
 import copy
 
 
-def collision_detect(body_pose,body_trans,pred_pos):
-    """基于fcl对执行布料和人体的碰撞检测&布料自碰撞检测
-    input:
-    布料人体碰撞:返回二者的最短距离,保证这个距离始终>0
-    布料自碰撞:再研究研究,与上一帧布料对比？？也不对==
-    """
-    # body_model是常量,mesh_body只需要输入trans和rotations修改即可
-    body = Mesh_obj("./assets/dress02/garment.obj")  
-    mesh_body = fcl.BVHModel()
-    mesh_body.beginModel(body.v.shape[0], body.f.shape[0])
-    mesh_body.addSubModel(body.v,body.f)
-    mesh_body.endModel()
-
-    # mesh_cloth的faces是常量,需要修改cloth.v,旋转和平移量来源于动作数据pose&trans
-    cloth = Mesh_obj("./assets/dress03/garment.obj")
-    mesh_cloth = fcl.BVHModel()
-    mesh_cloth.beginModel(cloth.v.shape[0], cloth.f.shape[0])
-    mesh_cloth.addSubModel(pred_pos,cloth.f)
-    mesh_cloth.endModel()
-
-    # 创建人体碰撞体
-    # ！！！这里有点问题:输入的pose是[52,3]带关节的,是否得根据关节旋转重新计算mesh_body顶点？
-
-    tb = fcl.Transform(body_pose,body_trans)
-    ob = fcl.CollisionObject(mesh_body, tb)
-
-    # 创建布料碰撞体
-    tc = fcl.Transform(Rotation.from_rotvec(body_pose[0]).as_matrix(),body_trans+np.array(np.array([0,-2.1519510746002397,90.4766845703125]) / 100.0))
-    oc = fcl.CollisionObject(mesh_cloth,tc)
-    
-    request = fcl.DistanceRequest()
-    result = fcl.DistanceResult()
-
-    # 返回两个碰撞体之间的距离作为Loss惩罚项
-    ret = fcl.distance(ob,oc, request, result)
-    
-    return ret 
-# endregion
-
 class Laplacian_Smooth(MessagePassing):
 
     """对原始数据Laplacian平滑:继承MessagePassing基类;
@@ -68,44 +29,35 @@ class Laplacian_Smooth(MessagePassing):
         super(Laplacian_Smooth, self).__init__(aggr='add')  # "Add" aggregation.
         
     def forward(self,x,edge_index,edge_weight=None):
-        # node_dim (int, optional): The axis along which to propagate.(default:`-2`)
-        # gcn_norm(self_loop=False) => : D(-0.5)*A*D(-0.5) => norm
+
         edge_index, norm = gcn_norm_my( 
                         edge_index=edge_index, edge_weight=edge_weight, num_nodes=x.size(self.node_dim),improved=False,
                         add_self_loops=False, flow="source_to_target", dtype=x.dtype)
         
-        # print(edge_index)
-        # print(norm)
         edge_index, norm = add_self_loops(edge_index=edge_index, edge_attr = -norm,num_nodes=x.size(self.node_dim))
         self.lap_edge = edge_index
         self.lap_weight = norm
         return self.propagate(edge_index,x=x,norm=norm)
     def message(self,x_i,x_j,norm):
-
-        # x_j has shape [E, features]: x_j对应的是edge_index[0]索引对应的坐标取值,不是edge_index[1]
-        # I - norm
-        #return norm.view(-1, 1) * (x_i  - x_j)
         return (norm.view(-1, 1)) * (x_j)
  
     def update(self, aggr_out):
         return aggr_out
     
     def laplacian_smooth(self,x_global,edge_index,iter_num=10,is_train=True):
-        # 对原始网格实现laplacian平滑: 剔除高频信息; -- 不是执行laplacian变换
+        # 对原始网格实现laplacian平滑: 剔除高频信息;
         # x_global:torch_tensor:[numverts,3] -> 初始全局坐标
         # output:final_res -> 拉普拉斯平滑后的全局坐标 
-        # 平滑iter_num次,权重 = 0.1
+        # 平滑iter_num次,权重 = 0.2
         weight = 0.2
         if is_train:
             for i in range(iter_num):
-                # print("平滑中...")
                 x_local = self(x_global,edge_index = edge_index)
                 x_global = x_global - weight * x_local
             return x_global
         else:
             pos_list = []
             for i in range(iter_num):
-                # print("平滑中...")
                 x_local = self(x_global,edge_index = edge_index)
                 x_global = x_global - weight * x_local
                 pos_list.append(x_global)
@@ -113,7 +65,7 @@ class Laplacian_Smooth(MessagePassing):
             return pos_list
     
     def laplacian_with_ancher(self,x=None,x_init=None,edge_index=None,Ancher=None):
-        # 执行laplacian变换,需要指定锚点来对解进行定位！# 根据拉普拉斯变换后的局部坐标来还原全局坐标
+        # 执行laplacian变换,需要指定锚点来对解进行定位# 根据拉普拉斯变换后的局部
         # Ancher:[indexlist,np.array(shape=(len(indexlist),3))] -> 表示ancher的索引和目标位置,第一个维度存储锚点索引列表;第二个表示目标位置
         # x:torch_tensor:[numverts,3] -> 拉普拉斯变换后的局部坐标
         # x_init:torch_tensor:[numverts,3] -> 原始模型的全局坐标
@@ -129,25 +81,21 @@ class Laplacian_Smooth(MessagePassing):
         weight = 0.5
         # 获得laplacian矩阵的矩阵表示
         adj = to_dense_adj(edge_index = self.lap_edge,edge_attr = self.lap_weight)[0].T
-        # print(adj)
+
         adj_temp = copy.deepcopy(adj.numpy())
         x_temp = copy.deepcopy(x.numpy())
-        # print(x.shape) [numverts,3]
-
+        
         # 变换需要指定anchor,但平滑不需要
         for index in Ancher[0]:
             tmp = np.zeros((1,x.shape[0]))
             tmp[0][index] = weight
-            # print(adj_temp.shape) #[numvert,numvert]
             adj_temp = np.concatenate([adj_temp,tmp],axis = 0)
+            
         Ancher[1] = Ancher[1].reshape(len(Ancher[0]),3)
-        # print(x_temp.shape,Ancher[1].shape)
         x_temp = np.concatenate([x_temp,weight*Ancher[1]],axis = 0)
 
         print('开始求解超定齐次线性方程....')
-
         final_res = lstsq(adj_temp,x_temp,rcond=None)
-        # print(final_res[0])
         return final_res[0]
 
 class reduction_tool_plus():
