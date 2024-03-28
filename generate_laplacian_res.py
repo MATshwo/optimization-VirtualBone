@@ -23,9 +23,6 @@ smoother = Laplacian_Smooth()
 
 def laplacian_compeat(pos,edge_index):
 
-    # for i in range(n):
-    #     print("For {}-th smoothing....".format(i+1))
-    
     pos_list = smoother.laplacian_smooth(torch.from_numpy(pos),edge_index)
     # for i in range(len(pos_list)):
     #     out_obj = copy.deepcopy(cloth) # 深拷贝,创建新变量副本
@@ -36,7 +33,6 @@ def laplacian_compeat(pos,edge_index):
 
 
 for file in os.listdir(HF_path)[:]:
-
     if "npz" in file :
         # 获取初始顶点坐标
         print(file)
@@ -48,7 +44,6 @@ for file in os.listdir(HF_path)[:]:
             # out_obj.v = init_pos[idx]
             # out_obj.write("laplacian_init.obj")
             lap_pos[idx],dpos[idx] = laplacian_compeat(copy.deepcopy(init_pos[idx]),data.edge_index)
-        #print(lap_pos.shape,dpos.shape)
         np.savez(os.path.join(LF_path,file),lap_pos = lap_pos,dpos = dpos)
         
 
